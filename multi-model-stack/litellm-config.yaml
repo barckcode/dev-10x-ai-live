@@ -22,5 +22,5 @@ litellm_settings:
   set_verbose: false
   telemetry: false
 
-general_settings:
-  master_key: sk-class-eu009-demo
+# master_key comes from the LITELLM_MASTER_KEY env var (see .env)
+general_settings: {}
