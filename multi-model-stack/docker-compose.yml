@@ -35,7 +35,7 @@ services:
       - --enable-prefix-caching
       - --dtype=auto
     healthcheck:
-      test: ["CMD-SHELL", "python -c 'import urllib.request,sys; urllib.request.urlopen(\"http://localhost:8001/health\", timeout=3); sys.exit(0)' || exit 1"]
+      test: ["CMD-SHELL", "python3 -c 'import urllib.request,sys; urllib.request.urlopen(\"http://localhost:8001/health\", timeout=3); sys.exit(0)' || exit 1"]
       interval: 15s
       timeout: 5s
       retries: 80
@@ -62,7 +62,7 @@ services:
       vllm-llm:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "python -c 'import urllib.request,sys; urllib.request.urlopen(\"http://localhost:8002/health\", timeout=3); sys.exit(0)' || exit 1"]
+      test: ["CMD-SHELL", "python3 -c 'import urllib.request,sys; urllib.request.urlopen(\"http://localhost:8002/health\", timeout=3); sys.exit(0)' || exit 1"]
       interval: 15s
       timeout: 5s
       retries: 80
@@ -91,7 +91,7 @@ services:
       vllm-llm:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "python -c 'import urllib.request,sys; urllib.request.urlopen(\"http://localhost:8000/health\", timeout=3); sys.exit(0)' || exit 1"]
+      test: ["CMD-SHELL", "python3 -c 'import urllib.request,sys; urllib.request.urlopen(\"http://localhost:8000/health\", timeout=3); sys.exit(0)' || exit 1"]
       interval: 15s
       timeout: 5s
       retries: 60
