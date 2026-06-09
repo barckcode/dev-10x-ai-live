@@ -1,17 +1,19 @@
 #!/usr/bin/env bash
 # Live-demo smoke test for the multi-model-stack.
 # Each test shows: endpoint, model, request, response, token usage.
+# All four calls go through LiteLLM (the single entry point on :4000).
 #
 # Usage:
 #   ./test.sh                        # against http://localhost:4000
 #   ./test.sh http://1.2.3.4:4000    # against a remote stack
+#
+# Requires: curl, jq (sudo apt-get install jq).
 
 set -u
 
 BASE="${1:-http://localhost:4000}"
 KEY="${LITELLM_KEY:-sk-class-demo}"
 
-# Colors
 B='\033[1m'; D='\033[2m'; G='\033[32m'; R='\033[31m'; Y='\033[33m'; C='\033[36m'; N='\033[0m'
 
 pass=0; fail=0
@@ -26,28 +28,27 @@ ko()   { printf "${R}✗ FAIL${N}\n"; fail=$((fail+1)); }
 kv()   { printf "  ${B}%-10s${N} %s\n" "$1" "$2"; }
 note() { printf "  ${D}%s${N}\n" "$1"; }
 
+if ! command -v jq >/dev/null 2>&1; then
+  echo "Missing jq. Install with: sudo apt-get install -y jq"; exit 2
+fi
+
 echo ""
 printf "${B}Multi-Model-Stack Smoke Test${N}\n"
-kv "Target:"    "$BASE  (all 4 calls go through LiteLLM)"
-kv "Auth key:"  "${KEY:0:14}…"
+kv "Target:"   "$BASE  (all 4 calls go through LiteLLM)"
+kv "Auth key:" "${KEY:0:14}…"
 
 # ─────────────────────────────────────────────────────────────────────
 header "TEST 1/4 — List available models"
 kv "Endpoint:" "GET $BASE/v1/models"
 echo ""
 out=$(curl -s -H "Authorization: Bearer $KEY" "$BASE/v1/models")
-echo "$out" | python3 -c '
-import json, sys
-d = json.load(sys.stdin)
-print("  Models exposed by LiteLLM:")
-for m in d.get("data", []):
-    print(f"    • {m[\"id\"]}")
-' 2>/dev/null
+echo "  Models exposed by LiteLLM:"
+echo "$out" | jq -r '.data[] | "    • " + .id' 2>/dev/null
 echo ""
-if echo "$out" | grep -q '"qwen3.6"' && echo "$out" | grep -q '"qwen3-embedding"' && echo "$out" | grep -q '"whisper"'; then
+if echo "$out" | jq -e '.data | map(.id) | (contains(["qwen3.6"]) and contains(["qwen3-embedding"]) and contains(["whisper"]))' >/dev/null 2>&1; then
   ok
 else
-  ko; echo "  raw: $out"
+  ko; echo "  raw: $out" | head -c 400
 fi
 
 # ─────────────────────────────────────────────────────────────────────
@@ -62,20 +63,17 @@ out=$(curl -s -H "Authorization: Bearer $KEY" -H "Content-Type: application/json
   -X POST "$BASE/v1/chat/completions" \
   -d "{\"model\":\"qwen3.6\",\"messages\":[{\"role\":\"user\",\"content\":\"$PROMPT\"}],\"max_tokens\":256,\"temperature\":0}")
 echo ""
-echo "$out" | python3 -c '
-import json, sys
-d = json.load(sys.stdin)
-content = d["choices"][0]["message"]["content"]
-usage = d.get("usage", {})
-print("  Response:")
-for line in content.splitlines() or [content]:
-    print(f"    {line}")
-print()
-print(f"  Tokens: prompt={usage.get(\"prompt_tokens\")}  "
-      f"completion={usage.get(\"completion_tokens\")}  "
-      f"total={usage.get(\"total_tokens\")}")
-print(f"  Backend: {d.get(\"model\")}  ({d.get(\"system_fingerprint\", \"?\")})")
-' 2>/dev/null && ok || { ko; echo "  raw: $out" | head -c 500; }
+content=$(echo "$out" | jq -r '.choices[0].message.content // empty' 2>/dev/null)
+if [ -n "$content" ]; then
+  echo "  Response:"
+  echo "$content" | sed 's/^/    /'
+  echo ""
+  echo "$out" | jq -r '"  Tokens: prompt=" + (.usage.prompt_tokens|tostring) + "  completion=" + (.usage.completion_tokens|tostring) + "  total=" + (.usage.total_tokens|tostring)'
+  echo "$out" | jq -r '"  Backend model: " + .model + "   (" + (.system_fingerprint // "?") + ")"'
+  ok
+else
+  ko; echo "  raw: $out" | head -c 400
+fi
 
 # ─────────────────────────────────────────────────────────────────────
 header "TEST 3/4 — Embeddings"
@@ -89,17 +87,20 @@ out=$(curl -s -H "Authorization: Bearer $KEY" -H "Content-Type: application/json
   -X POST "$BASE/v1/embeddings" \
   -d "{\"model\":\"qwen3-embedding\",\"input\":\"$TEXT\"}")
 echo ""
-echo "$out" | python3 -c '
-import json, sys
-d = json.load(sys.stdin)
-vec = d["data"][0]["embedding"]
-usage = d.get("usage", {})
-print(f"  Vector dimensions: {len(vec)}")
-print(f"  First 6 values:    [{\", \".join(f\"{v:+.4f}\" for v in vec[:6])}, …]")
-print(f"  L2 norm:           {sum(v*v for v in vec)**0.5:.4f}")
-print()
-print(f"  Tokens used: {usage.get(\"prompt_tokens\")}")
-' 2>/dev/null && ok || { ko; echo "  raw: $out" | head -c 500; }
+dim=$(echo "$out" | jq -r '.data[0].embedding | length' 2>/dev/null)
+if [ -n "$dim" ] && [ "$dim" -gt 0 ]; then
+  preview=$(echo "$out" | jq -r '.data[0].embedding[0:6] | map(. * 10000 | round / 10000) | tostring')
+  norm=$(echo "$out" | jq -r '[.data[0].embedding[] | . * .] | add | sqrt')
+  tokens=$(echo "$out" | jq -r '.usage.prompt_tokens // "n/a"')
+  echo "  Vector dimensions: $dim"
+  echo "  First 6 values:    $preview"
+  printf "  L2 norm:           %.4f\n" "$norm"
+  echo ""
+  echo "  Tokens used: $tokens"
+  ok
+else
+  ko; echo "  raw: $out" | head -c 400
+fi
 
 # ─────────────────────────────────────────────────────────────────────
 header "TEST 4/4 — Audio transcription (Whisper)"
@@ -114,25 +115,28 @@ if [ ! -f "$WAV" ]; then
         ffmpeg -y -f lavfi -i "sine=frequency=440:duration=1" -ac 1 -ar 16000 "$WAV" >/dev/null 2>&1
     }
 fi
+SIZE=$(stat -c%s "$WAV" 2>/dev/null || stat -f%z "$WAV")
 kv "Endpoint:" "POST $BASE/v1/audio/transcriptions"
 kv "Model:"    "whisper  (speaches serving Systran/faster-whisper-large-v3)"
-kv "Audio:"    "$WAV  ($(stat -c%s "$WAV" 2>/dev/null || stat -f%z "$WAV") bytes)"
+kv "Audio:"    "$WAV  ($SIZE bytes)"
 echo ""
 note "Transcribing (first run downloads model on the speaches side, up to ~1 min)..."
 out=$(curl -s --max-time 300 -H "Authorization: Bearer $KEY" \
   -X POST "$BASE/v1/audio/transcriptions" \
   -F "model=whisper" -F "file=@$WAV")
 echo ""
-echo "$out" | python3 -c '
-import json, sys
-d = json.load(sys.stdin)
-print(f"  Detected language: {d.get(\"language\")}")
-print(f"  Audio duration:    {d.get(\"duration\")} s")
-print(f"  Transcript:")
-text = d.get("text", "").strip()
-for line in (text or "(empty)").splitlines():
-    print(f"    {line}")
-' 2>/dev/null && ok || { ko; echo "  raw: $out" | head -c 500; }
+text=$(echo "$out" | jq -r '.text // empty' 2>/dev/null)
+if [ -n "$text" ]; then
+  lang=$(echo "$out" | jq -r '.language // "?"')
+  dur=$(echo "$out" | jq -r '.duration // "?"')
+  echo "  Detected language: $lang"
+  echo "  Audio duration:    $dur s"
+  echo "  Transcript:"
+  echo "$text" | sed 's/^[[:space:]]*/    /'
+  ok
+else
+  ko; echo "  raw: $out" | head -c 400
+fi
 
 # ─────────────────────────────────────────────────────────────────────
 echo ""
