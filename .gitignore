@@ -1,0 +1,11 @@
+# Local env overrides — never commit secrets/tokens
+.env
+**/.env
+
+# OS / editor noise
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+*.swo
