@@ -108,6 +108,8 @@ services:
     environment:
       LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:-sk-class-demo}
       LITELLM_LOG: "INFO"
+      UI_USERNAME: ${UI_USERNAME:-admin}
+      UI_PASSWORD: ${UI_PASSWORD:-sk-class-demo}
     command:
       - --config=/app/config.yaml
       - --port=4000
